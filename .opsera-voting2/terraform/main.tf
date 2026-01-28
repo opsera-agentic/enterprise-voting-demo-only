@@ -250,14 +250,14 @@ resource "aws_db_instance" "postgres" {
   instance_class       = var.rds_instance_class
   allocated_storage    = var.rds_allocated_storage
   storage_type         = "gp3"
-  storage_encrypted    = true
+  storage_encrypted    = false  # Disabled for dev - enable with proper KMS in prod
 
   db_name  = "votes"
   username = "postgres_admin"
+  password = "Voting2Dev2026!"  # Dev password - use Secrets Manager in prod
 
   # IAM Database Authentication - No password needed for app connections
   iam_database_authentication_enabled = true
-  manage_master_user_password         = true  # AWS manages the master password in Secrets Manager
 
   vpc_security_group_ids = [aws_security_group.rds.id]
   db_subnet_group_name   = aws_db_subnet_group.main.name
