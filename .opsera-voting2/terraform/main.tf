@@ -49,20 +49,22 @@ locals {
 
 ################################################################################
 # Data Sources - Existing Infrastructure
+# VPC is derived from the EKS cluster to avoid ambiguity
 ################################################################################
 
 data "aws_caller_identity" "current" {}
 
-data "aws_vpc" "existing" {
-  filter {
-    name   = "tag:Name"
-    values = ["opsera-vpc"]
-  }
+data "aws_eks_cluster" "existing" {
+  name = "${var.tenant}-usw2-np"
+}
 
-  filter {
-    name   = "state"
-    values = ["available"]
-  }
+data "aws_eks_cluster_auth" "existing" {
+  name = data.aws_eks_cluster.existing.name
+}
+
+# Get VPC from EKS cluster (avoids multiple VPC name match issue)
+data "aws_vpc" "existing" {
+  id = data.aws_eks_cluster.existing.vpc_config[0].vpc_id
 }
 
 data "aws_subnets" "private" {
@@ -87,14 +89,6 @@ data "aws_subnets" "public" {
     name   = "tag:Name"
     values = ["*public*"]
   }
-}
-
-data "aws_eks_cluster" "existing" {
-  name = "${var.tenant}-usw2-np"
-}
-
-data "aws_eks_cluster_auth" "existing" {
-  name = data.aws_eks_cluster.existing.name
 }
 
 ################################################################################
