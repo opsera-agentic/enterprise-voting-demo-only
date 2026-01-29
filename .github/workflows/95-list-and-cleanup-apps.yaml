@@ -17,6 +17,7 @@ on:
           - list                    # List all apps (safe, read-only)
           - delete-single           # Delete a specific app
           - delete-by-prefix        # Delete all apps matching prefix
+          - delete-high-pod-apps    # Delete apps with >5 pods (requires confirmation)
           - cleanup-orphaned-ns     # Clean up namespaces without ArgoCD apps
       app_name:
         description: "App name (for delete-single)"
@@ -42,6 +43,10 @@ on:
         options:
           - "true"
           - "false"
+      confirm_high_pod_delete:
+        description: "Type 'DELETE-HIGH-POD-APPS' to confirm deletion of apps with >5 pods"
+        required: false
+        type: string
 
 env:
   AWS_REGION: us-west-2
@@ -61,6 +66,7 @@ jobs:
     outputs:
       apps_json: ${{ steps.list.outputs.apps_json }}
       spoke_clusters: ${{ steps.list.outputs.spoke_clusters }}
+      high_pod_apps: ${{ steps.list.outputs.high_pod_apps }}
 
     steps:
       - name: Configure AWS credentials
@@ -91,17 +97,70 @@ jobs:
           echo "**Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Get all applications
+          # Get all applications from hub
           APPS_JSON=$(kubectl get applications -n argocd -o json)
           TOTAL=$(echo "$APPS_JSON" | jq '.items | length')
 
-          echo "## 📊 Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Total Applications**: $TOTAL" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
           # Extract unique destination clusters
           CLUSTERS=$(echo "$APPS_JSON" | jq -r '[.items[].spec.destination.name // .items[].spec.destination.server] | unique | .[]')
+
+          # Build app list with pod counts
+          echo "Collecting pod counts from spoke clusters..."
+          > /tmp/app_pods.txt
+
+          for cluster in $CLUSTERS; do
+            # Determine spoke cluster name
+            if [[ "$cluster" == *"np"* ]] || [[ "$cluster" == *"non-prod"* ]]; then
+              SPOKE="${{ env.SPOKE_NP }}"
+            elif [[ "$cluster" == *"prod"* ]]; then
+              SPOKE="${{ env.SPOKE_PROD }}"
+            else
+              SPOKE="$cluster"
+            fi
+
+            # Connect to spoke cluster
+            if aws eks update-kubeconfig --name "$SPOKE" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+              echo "Connected to spoke: $SPOKE"
+
+              # Get apps targeting this cluster
+              echo "$APPS_JSON" | jq -r --arg c "$cluster" '
+                .items[] |
+                select(.spec.destination.name == $c or .spec.destination.server == $c) |
+                "\(.metadata.name)|\(.spec.destination.namespace)|\(.spec.destination.name // "in-cluster")|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.spec.source.path // "N/A")"
+              ' | while IFS='|' read NAME NS DEST SYNC HEALTH PATH; do
+                # Count pods in namespace
+                POD_COUNT=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+                echo "${POD_COUNT}|${NAME}|${NS}|${DEST}|${SYNC}|${HEALTH}|${PATH}" >> /tmp/app_pods.txt
+              done
+            else
+              echo "Could not connect to spoke: $SPOKE"
+              # Add apps with unknown pod count
+              echo "$APPS_JSON" | jq -r --arg c "$cluster" '
+                .items[] |
+                select(.spec.destination.name == $c or .spec.destination.server == $c) |
+                "\(.metadata.name)|\(.spec.destination.namespace)|\(.spec.destination.name // "in-cluster")|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.spec.source.path // "N/A")"
+              ' | while IFS='|' read NAME NS DEST SYNC HEALTH PATH; do
+                echo "?|${NAME}|${NS}|${DEST}|${SYNC}|${HEALTH}|${PATH}" >> /tmp/app_pods.txt
+              done
+            fi
+          done
+
+          # Reconnect to hub for remaining operations
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+          # Count apps by pod threshold
+          HIGH_POD_COUNT=$(awk -F'|' '$1 != "?" && $1 > 5 {count++} END {print count+0}' /tmp/app_pods.txt)
+          TOTAL_PODS=$(awk -F'|' '$1 != "?" {sum+=$1} END {print sum+0}' /tmp/app_pods.txt)
+
+          echo "## 📊 Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total Applications** | $TOTAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total Pods** | $TOTAL_PODS |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Apps with >5 pods** | ⚠️ $HIGH_POD_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
           echo "**Target Clusters (Spokes)**:" >> $GITHUB_STEP_SUMMARY
           for cluster in $CLUSTERS; do
             echo "- \`$cluster\`" >> $GITHUB_STEP_SUMMARY
@@ -128,21 +187,61 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Detailed Application Table
-          echo "## 📝 Application Details" >> $GITHUB_STEP_SUMMARY
+          # Detailed Application Table - SORTED BY POD COUNT (descending)
+          echo "## 📝 Application Details (Sorted by Pod Count)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| App Name | Namespace | Dest Cluster | Sync | Health | Repo Path |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-----------|--------------|------|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Pods | App Name | Namespace | Dest Cluster | Sync | Health | Action |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|----------|-----------|--------------|------|--------|--------|" >> $GITHUB_STEP_SUMMARY
 
-          echo "$APPS_JSON" | jq -r '.items[] |
-            "\(.metadata.name)|\(.spec.destination.namespace)|\(.spec.destination.name // "in-cluster")|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.spec.source.path // "N/A")"
-          ' | sort | while IFS='|' read NAME NS DEST SYNC HEALTH PATH; do
+          # Sort by pod count descending (numeric sort)
+          sort -t'|' -k1 -rn /tmp/app_pods.txt | while IFS='|' read PODS NAME NS DEST SYNC HEALTH PATH; do
             # Status icons
             SYNC_ICON="✅"; [ "$SYNC" != "Synced" ] && SYNC_ICON="⚠️"
             HEALTH_ICON="✅"; [ "$HEALTH" != "Healthy" ] && HEALTH_ICON="⚠️"; [ "$HEALTH" == "Degraded" ] && HEALTH_ICON="❌"
 
-            echo "| \`$NAME\` | \`$NS\` | \`$DEST\` | $SYNC_ICON $SYNC | $HEALTH_ICON $HEALTH | \`$PATH\` |" >> $GITHUB_STEP_SUMMARY
+            # Mark for deletion if >5 pods
+            if [ "$PODS" != "?" ] && [ "$PODS" -gt 5 ]; then
+              ACTION="🗑️ **DELETE**"
+              POD_DISPLAY="**$PODS** ⚠️"
+            else
+              ACTION="-"
+              POD_DISPLAY="$PODS"
+            fi
+
+            echo "| $POD_DISPLAY | \`$NAME\` | \`$NS\` | \`$DEST\` | $SYNC_ICON $SYNC | $HEALTH_ICON $HEALTH | $ACTION |" >> $GITHUB_STEP_SUMMARY
           done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # High Pod Apps Section (>5 pods)
+          if [ "$HIGH_POD_COUNT" -gt 0 ]; then
+            echo "## ⚠️ Apps Marked for Deletion (>5 pods)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The following applications have more than 5 pods and are marked for deletion:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| App Name | Pods | Namespace | Cluster |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|------|-----------|---------|" >> $GITHUB_STEP_SUMMARY
+
+            awk -F'|' '$1 != "?" && $1 > 5' /tmp/app_pods.txt | sort -t'|' -k1 -rn | while IFS='|' read PODS NAME NS DEST SYNC HEALTH PATH; do
+              echo "| \`$NAME\` | **$PODS** | \`$NS\` | \`$DEST\` |" >> $GITHUB_STEP_SUMMARY
+            done
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**To delete these apps**, re-run this workflow with:" >> $GITHUB_STEP_SUMMARY
+            echo "- action: \`delete-high-pod-apps\`" >> $GITHUB_STEP_SUMMARY
+            echo "- confirm_high_pod_delete: \`DELETE-HIGH-POD-APPS\`" >> $GITHUB_STEP_SUMMARY
+            echo "- dry_run: \`false\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Save high-pod apps list for downstream job
+            HIGH_POD_APPS=$(awk -F'|' '$1 != "?" && $1 > 5 {print $2}' /tmp/app_pods.txt | tr '\n' ',' | sed 's/,$//')
+            echo "high_pod_apps=$HIGH_POD_APPS" >> $GITHUB_OUTPUT
+          else
+            echo "## ✅ No Apps Exceed Pod Threshold" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All applications have 5 or fewer pods." >> $GITHUB_STEP_SUMMARY
+            echo "high_pod_apps=" >> $GITHUB_OUTPUT
+          fi
 
           echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -404,6 +503,158 @@ jobs:
             echo "## ✅ Bulk Deletion Complete" >> $GITHUB_STEP_SUMMARY
           fi
 
+  delete-high-pod-apps:
+    name: "🗑️ Delete High-Pod Apps (>5 pods)"
+    runs-on: ubuntu-latest
+    needs: [list-applications]
+    if: github.event.inputs.action == 'delete-high-pod-apps'
+
+    steps:
+      - name: Validate Confirmation
+        run: |
+          CONFIRMATION="${{ github.event.inputs.confirm_high_pod_delete }}"
+          if [ "$CONFIRMATION" != "DELETE-HIGH-POD-APPS" ]; then
+            echo "# ❌ Confirmation Required" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To delete apps with >5 pods, you must enter the confirmation code:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Required**: \`DELETE-HIGH-POD-APPS\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Received**: \`$CONFIRMATION\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Re-run this workflow with the correct confirmation code." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/voting2-dev-github-actions
+          role-session-name: argocd-delete-high-pod-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Delete High-Pod Applications
+        run: |
+          DRY_RUN="${{ github.event.inputs.dry_run }}"
+          HIGH_POD_APPS="${{ needs.list-applications.outputs.high_pod_apps }}"
+
+          echo "# 🗑️ Delete High-Pod Applications (>5 pods)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Dry Run**: $DRY_RUN" >> $GITHUB_STEP_SUMMARY
+          echo "**Confirmation**: ✅ Validated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Connect to hub
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+          if [ -z "$HIGH_POD_APPS" ]; then
+            echo "## ✅ No High-Pod Apps Found" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "There are no applications with more than 5 pods to delete." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Convert comma-separated list to space-separated
+          APPS_LIST=$(echo "$HIGH_POD_APPS" | tr ',' ' ')
+          APP_COUNT=$(echo "$APPS_LIST" | wc -w | tr -d ' ')
+
+          echo "## 📋 Applications to Delete: $APP_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| App Name | Namespace | Cluster | Pods | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----------|---------|------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          NAMESPACES_TO_DELETE=""
+
+          for app in $APPS_LIST; do
+            # Get app details
+            APP_JSON=$(kubectl get application "$app" -n argocd -o json 2>/dev/null || echo "{}")
+            if [ "$APP_JSON" == "{}" ]; then
+              echo "| \`$app\` | - | - | - | ⚠️ Not found |" >> $GITHUB_STEP_SUMMARY
+              continue
+            fi
+
+            NS=$(echo "$APP_JSON" | jq -r '.spec.destination.namespace')
+            CLUSTER=$(echo "$APP_JSON" | jq -r '.spec.destination.name // "in-cluster"')
+
+            # Get pod count from spoke
+            if [[ "$CLUSTER" == *"np"* ]] || [[ "$CLUSTER" == *"non-prod"* ]]; then
+              SPOKE="${{ env.SPOKE_NP }}"
+            elif [[ "$CLUSTER" == *"prod"* ]]; then
+              SPOKE="${{ env.SPOKE_PROD }}"
+            else
+              SPOKE="$CLUSTER"
+            fi
+
+            POD_COUNT="?"
+            if aws eks update-kubeconfig --name "$SPOKE" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+              POD_COUNT=$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "?")
+            fi
+
+            # Reconnect to hub
+            aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+            if [ "$DRY_RUN" == "true" ]; then
+              echo "| \`$app\` | \`$NS\` | \`$CLUSTER\` | $POD_COUNT | 🔍 Would delete |" >> $GITHUB_STEP_SUMMARY
+            else
+              # Save namespace for cleanup
+              if [ -n "$NS" ] && [ "$NS" != "null" ]; then
+                NAMESPACES_TO_DELETE="$NAMESPACES_TO_DELETE $CLUSTER:$NS"
+              fi
+
+              # Delete application
+              kubectl delete application "$app" -n argocd --cascade=foreground --timeout=120s || true
+              echo "| \`$app\` | \`$NS\` | \`$CLUSTER\` | $POD_COUNT | ✅ Deleted |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$DRY_RUN" == "true" ]; then
+            echo "## 🔍 Dry Run Complete" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**To actually delete these apps, re-run with dry_run=false**" >> $GITHUB_STEP_SUMMARY
+          else
+            # Cleanup spoke namespaces if requested
+            if [ "${{ github.event.inputs.cleanup_spoke }}" == "yes" ] && [ -n "$NAMESPACES_TO_DELETE" ]; then
+              echo "### 🧹 Cleaning Spoke Cluster Namespaces" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+
+              UNIQUE_NS=$(echo "$NAMESPACES_TO_DELETE" | tr ' ' '\n' | sort -u)
+
+              for entry in $UNIQUE_NS; do
+                CLUSTER=$(echo "$entry" | cut -d: -f1)
+                NS=$(echo "$entry" | cut -d: -f2)
+
+                if [ -z "$NS" ] || [ "$NS" == "null" ]; then
+                  continue
+                fi
+
+                if [[ "$CLUSTER" == *"np"* ]] || [[ "$CLUSTER" == *"non-prod"* ]]; then
+                  SPOKE="${{ env.SPOKE_NP }}"
+                elif [[ "$CLUSTER" == *"prod"* ]]; then
+                  SPOKE="${{ env.SPOKE_PROD }}"
+                else
+                  SPOKE="$CLUSTER"
+                fi
+
+                if aws eks update-kubeconfig --name "$SPOKE" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+                  if kubectl get namespace "$NS" &>/dev/null; then
+                    kubectl delete namespace "$NS" --timeout=120s || true
+                    echo "✅ Deleted namespace \`$NS\` from \`$SPOKE\`" >> $GITHUB_STEP_SUMMARY
+                  fi
+                fi
+              done
+            fi
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ High-Pod Apps Deletion Complete" >> $GITHUB_STEP_SUMMARY
+          fi
+
   cleanup-orphaned:
     name: "🧹 Cleanup Orphaned Namespaces"
     runs-on: ubuntu-latest
@@ -488,7 +739,7 @@ jobs:
   summary:
     name: "📊 Final Summary"
     runs-on: ubuntu-latest
-    needs: [list-applications, delete-single, delete-by-prefix, cleanup-orphaned]
+    needs: [list-applications, delete-single, delete-by-prefix, delete-high-pod-apps, cleanup-orphaned]
     if: always()
 
     steps:
@@ -504,6 +755,7 @@ jobs:
           echo "| List Applications | ${{ needs.list-applications.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Delete Single | ${{ needs.delete-single.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Delete by Prefix | ${{ needs.delete-by-prefix.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Delete High-Pod Apps | ${{ needs.delete-high-pod-apps.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Cleanup Orphaned | ${{ needs.cleanup-orphaned.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
