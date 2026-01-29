@@ -104,9 +104,11 @@ jobs:
           # Extract unique destination clusters
           CLUSTERS=$(echo "$APPS_JSON" | jq -r '[.items[].spec.destination.name // .items[].spec.destination.server] | unique | .[]')
 
-          # Build app list with pod counts
+          # Build app list with pod counts using jq (avoid shell loops)
           echo "Collecting pod counts from spoke clusters..."
           > /tmp/app_pods.txt
+          > /tmp/ns_pod_counts.json
+          echo '{}' > /tmp/ns_pod_counts.json
 
           # Get unique namespaces per cluster for pod counting
           for cluster in $CLUSTERS; do
@@ -119,37 +121,38 @@ jobs:
               SPOKE="$cluster"
             fi
 
-            # Get list of apps for this cluster
-            APP_LIST=$(echo "$APPS_JSON" | jq -r --arg c "$cluster" '
-              .items[] |
-              select(.spec.destination.name == $c or .spec.destination.server == $c) |
-              "\(.metadata.name)|\(.spec.destination.namespace)|\(.spec.destination.name // "in-cluster")|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.spec.source.path // "N/A")"
-            ')
-
-            # Try to connect to spoke cluster
+            # Try to connect to spoke cluster and get pod counts
             if aws eks update-kubeconfig --name "$SPOKE" --region ${{ env.AWS_REGION }} 2>/dev/null; then
               echo "Connected to spoke: $SPOKE"
 
-              # Get unique namespaces and their pod counts in one go
-              NS_POD_COUNTS=$(kubectl get pods --all-namespaces -o json 2>/dev/null | jq -r '
-                [.items[] | .metadata.namespace] | group_by(.) | map({ns: .[0], count: length}) | .[] | "\(.ns)=\(.count)"
-              ' | tr '\n' '|')
+              # Get namespace pod counts as JSON object
+              kubectl get pods --all-namespaces -o json 2>/dev/null | jq '
+                [.items[] | .metadata.namespace] | group_by(.) |
+                map({key: .[0], value: length}) | from_entries
+              ' > /tmp/ns_pod_counts.json 2>/dev/null || echo '{}' > /tmp/ns_pod_counts.json
 
-              # Process each app
-              echo "$APP_LIST" | while IFS='|' read -r NAME NS DEST SYNC HEALTH PATH; do
-                [ -z "$NAME" ] && continue
-                # Look up pod count for this namespace
-                POD_COUNT=$(echo "$NS_POD_COUNTS" | tr '|' '\n' | grep "^${NS}=" | cut -d'=' -f2)
-                [ -z "$POD_COUNT" ] && POD_COUNT="0"
-                echo "${POD_COUNT}|${NAME}|${NS}|${DEST}|${SYNC}|${HEALTH}|${PATH}"
-              done >> /tmp/app_pods.txt
+              # Use jq to join apps with pod counts
+              echo "$APPS_JSON" | jq -r --arg c "$cluster" --slurpfile pods /tmp/ns_pod_counts.json '
+                .items[] |
+                select(.spec.destination.name == $c or .spec.destination.server == $c) |
+                {
+                  name: .metadata.name,
+                  ns: .spec.destination.namespace,
+                  dest: (.spec.destination.name // "in-cluster"),
+                  sync: (.status.sync.status // "Unknown"),
+                  health: (.status.health.status // "Unknown"),
+                  path: (.spec.source.path // "N/A")
+                } |
+                "\($pods[0][.ns] // 0)|\(.name)|\(.ns)|\(.dest)|\(.sync)|\(.health)|\(.path)"
+              ' >> /tmp/app_pods.txt
             else
               echo "Could not connect to spoke: $SPOKE"
               # Add apps with unknown pod count
-              echo "$APP_LIST" | while IFS='|' read -r NAME NS DEST SYNC HEALTH PATH; do
-                [ -z "$NAME" ] && continue
-                echo "?|${NAME}|${NS}|${DEST}|${SYNC}|${HEALTH}|${PATH}"
-              done >> /tmp/app_pods.txt
+              echo "$APPS_JSON" | jq -r --arg c "$cluster" '
+                .items[] |
+                select(.spec.destination.name == $c or .spec.destination.server == $c) |
+                "?|\(.metadata.name)|\(.spec.destination.namespace)|\(.spec.destination.name // "in-cluster")|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.spec.source.path // "N/A")"
+              ' >> /tmp/app_pods.txt
             fi
           done
 
