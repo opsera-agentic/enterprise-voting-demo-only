@@ -139,7 +139,7 @@ jobs:
   init-database:
     name: "🗄️ Initialize Database"
     needs: [terraform]
-    if: always() && needs.terraform.result == 'success' && inputs.action == 'apply'
+    if: always() && (needs.terraform.result == 'success' || inputs.skip_terraform == true) && inputs.action == 'apply'
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS
