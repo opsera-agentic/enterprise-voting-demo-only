@@ -40,10 +40,10 @@ patches:
 images:
   - name: PLACEHOLDER_VOTE_IMAGE
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/sperivote11-dev-vote
-    newTag: latest
+    newTag: 5f8fb54-20260202144636
   - name: PLACEHOLDER_RESULT_IMAGE
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/sperivote11-dev-result
-    newTag: latest
+    newTag: 5f8fb54-20260202144636
   - name: PLACEHOLDER_WORKER_IMAGE
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/sperivote11-dev-worker
-    newTag: latest
+    newTag: 5f8fb54-20260202144636
