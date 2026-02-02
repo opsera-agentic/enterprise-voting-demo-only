@@ -2,27 +2,30 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>{{option_a}} vs {{option_b}}!</title>
+    <title>Opsera Voting Demo</title>
     <base href="/index.html">
     <meta name = "viewport" content = "width=device-width, initial-scale = 1.0">
-    <meta name="keywords" content="docker-compose, docker, stack">
-    <meta name="author" content="Tutum dev team">
+    <meta name="keywords" content="opsera, devops, demo">
+    <meta name="author" content="Opsera">
     <link rel='stylesheet' href="{{ url_for('static',filename='stylesheets/style.css') }}" />
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.4.0/css/font-awesome.min.css">
   </head>
   <body>
     <div id="content-container">
       <div id="content-container-center">
+        <div id="header">
+          <span class="logo">OPSERA</span> Voting Demo
+        </div>
         <h3>{{option_a}} vs {{option_b}}!</h3>
         <form id="choice" name='form' method="POST" action="/">
           <button id="a" type="submit" name="vote" class="a" value="a">{{option_a}}</button>
           <button id="b" type="submit" name="vote" class="b" value="b">{{option_b}}</button>
         </form>
         <div id="tip">
-          (Tip: you can change your vote)
+          Cast your vote! You can change it anytime.
         </div>
         <div id="hostname">
-          Processed by container ID {{hostname}}
+          Powered by Opsera GitOps | Pod: {{hostname}}
         </div>
       </div>
     </div>

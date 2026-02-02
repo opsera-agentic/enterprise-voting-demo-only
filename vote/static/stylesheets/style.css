@@ -66,6 +66,19 @@ button.b{
 
 #content-container-center h3{
   color: #254356;
+  font-size: 28px;
+}
+
+#header{
+  margin-bottom: 30px;
+  color: #1aaaf8;
+  font-size: 32px;
+  font-weight: 400;
+}
+#header .logo{
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #254356;
 }
 
 #choice{
