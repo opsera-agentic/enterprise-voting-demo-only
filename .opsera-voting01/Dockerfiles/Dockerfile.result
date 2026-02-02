@@ -9,7 +9,7 @@ WORKDIR /usr/local/app
 
 COPY result/package*.json ./
 
-RUN npm ci && \
+RUN npm install --omit=dev && \
     npm cache clean --force && \
     mv /usr/local/app/node_modules /node_modules
 

@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: vote3-dev
-  labels:
-    app.kubernetes.io/name: vote3
-    app.kubernetes.io/part-of: vote3
-    environment: dev
-    tenant: opsera
