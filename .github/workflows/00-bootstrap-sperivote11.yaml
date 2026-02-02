@@ -262,14 +262,38 @@ jobs:
                     echo "🎉 Database user app_user configured with IAM authentication!"
           EOF
 
-          # Wait for job to complete
+          # Wait for pod to start
+          echo "Waiting for pod to start..."
+          sleep 10
+          kubectl get pods -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} -l job-name=db-init-${{ env.APP_NAME }}
+
+          # Wait for job to complete (with loop for better logging)
           echo "Waiting for database init job to complete..."
-          kubectl wait --for=condition=complete job/db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} --timeout=180s
+          for i in {1..36}; do
+            STATUS=$(kubectl get job db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo "Pending")
+            echo "[$i/36] Job status: $STATUS"
 
-          # Show job logs
-          kubectl logs job/db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }}
+            if [ "$STATUS" == "Complete" ]; then
+              echo "✅ Job completed successfully!"
+              kubectl logs job/db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }}
+              echo "✅ Database user app_user created with IAM auth" >> $GITHUB_STEP_SUMMARY
+              exit 0
+            elif [ "$STATUS" == "Failed" ]; then
+              echo "❌ Job failed! Showing logs..."
+              kubectl logs job/db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} || true
+              kubectl describe pod -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} -l job-name=db-init-${{ env.APP_NAME }} || true
+              exit 1
+            fi
 
-          echo "✅ Database user app_user created with IAM auth" >> $GITHUB_STEP_SUMMARY
+            sleep 5
+          done
+
+          # Timeout - show debug info
+          echo "⚠️ Timeout waiting for job. Showing debug info..."
+          kubectl get pods -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} -l job-name=db-init-${{ env.APP_NAME }} -o wide
+          kubectl describe pod -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} -l job-name=db-init-${{ env.APP_NAME }}
+          kubectl logs job/db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} || true
+          exit 1
 
   apply-argocd:
     name: "🚀 Apply ArgoCD"
