@@ -138,8 +138,8 @@ jobs:
 
   init-database:
     name: "🗄️ Initialize Database"
-    needs: [terraform]
-    if: always() && (needs.terraform.result == 'success' || inputs.skip_terraform == true) && inputs.action == 'apply'
+    needs: [terraform, update-manifests]
+    if: always() && (needs.terraform.result == 'success' || inputs.skip_terraform == true) && needs.update-manifests.result == 'success' && inputs.action == 'apply'
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS
@@ -160,40 +160,84 @@ jobs:
           terraform init -backend-config="key=sperivote11/dev/terraform.tfstate"
           echo "host=$(terraform output -raw rds_address)" >> $GITHUB_OUTPUT
 
-      - name: Install PostgreSQL Client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Setup kubectl for SPOKE cluster
+        run: aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
 
-      - name: Create IAM Database User
+      - name: Create IAM Database User via K8s Job
         env:
-          PGPASSWORD: SpriVote11Dev2026!
+          RDS_HOST: ${{ steps.rds.outputs.host }}
+          DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
         run: |
-          # Connect and create app_user with IAM auth
-          psql -h ${{ steps.rds.outputs.host }} -U postgres_admin -d votes <<'EOSQL'
-          -- Create app_user if not exists
-          DO $$
-          BEGIN
-            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'app_user') THEN
-              CREATE USER app_user WITH LOGIN;
-              RAISE NOTICE 'Created user app_user';
-            ELSE
-              RAISE NOTICE 'User app_user already exists';
-            END IF;
-          END
-          $$;
+          # Create namespace if not exists
+          kubectl create namespace ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} --dry-run=client -o yaml | kubectl apply -f -
 
-          -- Grant IAM authentication
-          GRANT rds_iam TO app_user;
+          # Delete old job if exists
+          kubectl delete job db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} --ignore-not-found
 
-          -- Grant permissions
-          GRANT ALL PRIVILEGES ON DATABASE votes TO app_user;
-          GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_user;
-          GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO app_user;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO app_user;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO app_user;
+          # Create and run database init job inside the cluster (has VPC access to RDS)
+          cat <<EOF | kubectl apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: db-init-${{ env.APP_NAME }}
+            namespace: ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }}
+          spec:
+            ttlSecondsAfterFinished: 300
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                - name: psql
+                  image: postgres:15-alpine
+                  env:
+                  - name: PGPASSWORD
+                    value: "${DB_PASSWORD}"
+                  - name: PGHOST
+                    value: "${RDS_HOST}"
+                  - name: PGUSER
+                    value: "postgres_admin"
+                  - name: PGDATABASE
+                    value: "votes"
+                  command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "Connecting to RDS at \${PGHOST}..."
+                    psql -c "
+                    -- Create app_user if not exists
+                    DO \\\$\\\$
+                    BEGIN
+                      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'app_user') THEN
+                        CREATE USER app_user WITH LOGIN;
+                        RAISE NOTICE 'Created user app_user';
+                      ELSE
+                        RAISE NOTICE 'User app_user already exists';
+                      END IF;
+                    END
+                    \\\$\\\$;
 
-          -- Verify
-          SELECT usename, usesuper, usecreatedb FROM pg_user WHERE usename = 'app_user';
-          EOSQL
+                    -- Grant IAM authentication
+                    GRANT rds_iam TO app_user;
+
+                    -- Grant permissions
+                    GRANT ALL PRIVILEGES ON DATABASE votes TO app_user;
+                    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_user;
+                    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO app_user;
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO app_user;
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO app_user;
+                    "
+
+                    echo "Verifying user creation..."
+                    psql -c "SELECT usename, usesuper, usecreatedb FROM pg_user WHERE usename = 'app_user';"
+                    echo "✅ Database user app_user configured successfully"
+          EOF
+
+          # Wait for job to complete
+          echo "Waiting for database init job to complete..."
+          kubectl wait --for=condition=complete job/db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} --timeout=120s
+
+          # Show job logs
+          kubectl logs job/db-init-${{ env.APP_NAME }} -n ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }}
 
           echo "✅ Database user app_user created with IAM auth" >> $GITHUB_STEP_SUMMARY
 
