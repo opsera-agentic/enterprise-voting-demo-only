@@ -1,0 +1,19 @@
+# Environment-specific ConfigMap for QA
+# Endpoints populated by bootstrap workflow
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vote3-config
+  labels:
+    app.kubernetes.io/name: vote3
+    app.kubernetes.io/part-of: vote3
+    environment: qa
+data:
+  # Redis - ElastiCache endpoint (populated by bootstrap)
+  REDIS_HOST: "PLACEHOLDER_REDIS_HOST"
+  REDIS_PORT: "6379"
+  # PostgreSQL - RDS endpoint (populated by bootstrap)
+  DATABASE_HOST: "PLACEHOLDER_DATABASE_HOST"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "votes"
+  AWS_REGION: "us-west-2"

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: result
+  labels:
+    app: result
+    app.kubernetes.io/name: result
+    app.kubernetes.io/part-of: vote3
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    app: result

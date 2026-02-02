@@ -1,0 +1,37 @@
+# Ingress for vote3 - HTTP routing only
+# RULE 104: No TLS/cert-manager in Ingress - TLS handled at Ingress Controller level
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vote3-ingress
+  labels:
+    app.kubernetes.io/name: vote3
+    app.kubernetes.io/part-of: vote3
+  annotations:
+    # RULE 105: Both ingressClassName AND annotation required for NGINX compatibility
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  # NO spec.tls section - RULE 104
+  rules:
+    - host: vote-vote3-dev.agent.opsera.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vote
+                port:
+                  number: 80
+    - host: result-vote3-dev.agent.opsera.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: result
+                port:
+                  number: 80
