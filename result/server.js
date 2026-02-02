@@ -9,8 +9,16 @@ var express = require('express'),
 
 var port = process.env.PORT || 4000;
 
+// Cache config so we don't call Secrets Manager on every retry
+var cachedConfig = null;
+
 // Get database credentials from Secrets Manager (using IRSA)
 async function getConnectionConfig() {
+  // Return cached config if available (don't fetch secrets on every retry)
+  if (cachedConfig) {
+    return cachedConfig;
+  }
+
   const secretArn = process.env.DATABASE_SECRET_ARN;
 
   if (secretArn) {
@@ -30,7 +38,7 @@ async function getConnectionConfig() {
 
     console.log(`Using Secrets Manager credentials for RDS: ${host}:${dbPort} as ${secret.username}`);
 
-    return {
+    cachedConfig = {
       host: host,
       port: dbPort,
       user: secret.username,
@@ -38,13 +46,19 @@ async function getConnectionConfig() {
       database: database,
       ssl: {
         rejectUnauthorized: false
-      }
+      },
+      // Limit pool size to avoid exhausting RDS connections
+      max: 3,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000
     };
+    return cachedConfig;
   } else {
     // Use traditional connection string
     const connectionString = process.env.DATABASE_URL || 'postgres://postgres:postgres@db/postgres';
     console.log('Using password authentication for database');
-    return { connectionString };
+    cachedConfig = { connectionString, max: 3 };
+    return cachedConfig;
   }
 }
 
@@ -58,14 +72,19 @@ io.on('connection', function (socket) {
 
 // Initialize database connection with retry
 async function initializeDatabase() {
-  let pool;
+  // Create pool once, outside retry loop
+  const config = await getConnectionConfig();
+  const pool = new Pool(config);
+
+  // Handle pool errors
+  pool.on('error', (err) => {
+    console.error('Unexpected pool error:', err.message);
+  });
 
   async.retry(
-    {times: 1000, interval: 1000},
+    {times: 100, interval: 2000},
     async function(callback) {
       try {
-        const config = await getConnectionConfig();
-        pool = new Pool(config);
         const client = await pool.connect();
         callback(null, client);
       } catch (err) {
