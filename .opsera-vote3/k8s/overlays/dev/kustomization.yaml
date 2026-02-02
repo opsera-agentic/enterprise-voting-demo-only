@@ -41,10 +41,10 @@ patches:
 images:
   - name: PLACEHOLDER_VOTE_IMAGE
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/vote3-dev-vote
-    newTag: de1be1b-20260202183819
+    newTag: 17ea78e-20260202184825
   - name: PLACEHOLDER_RESULT_IMAGE
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/vote3-dev-result
-    newTag: de1be1b-20260202183819
+    newTag: 17ea78e-20260202184825
   - name: PLACEHOLDER_WORKER_IMAGE
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/vote3-dev-worker
-    newTag: de1be1b-20260202183819
+    newTag: 17ea78e-20260202184825
