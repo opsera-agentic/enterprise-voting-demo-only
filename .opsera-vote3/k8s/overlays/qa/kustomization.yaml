@@ -27,10 +27,10 @@ patches:
 images:
   - name: PLACEHOLDER_VOTE_IMAGE
     newName: PLACEHOLDER_ECR_REGISTRY/vote3-qa-vote
-    newTag: 27c1ce9-20260202162722
+    newTag: de1be1b-20260202183819
   - name: PLACEHOLDER_RESULT_IMAGE
     newName: PLACEHOLDER_ECR_REGISTRY/vote3-qa-result
-    newTag: 27c1ce9-20260202162722
+    newTag: de1be1b-20260202183819
   - name: PLACEHOLDER_WORKER_IMAGE
     newName: PLACEHOLDER_ECR_REGISTRY/vote3-qa-worker
-    newTag: 27c1ce9-20260202162722
+    newTag: de1be1b-20260202183819
