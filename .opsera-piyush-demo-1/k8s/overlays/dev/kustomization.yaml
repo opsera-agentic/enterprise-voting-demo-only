@@ -14,13 +14,13 @@ commonLabels:
 images:
   - name: vote
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/piyush-demo-1-vote
-    newTag: 8dfcd38-20260203202043
+    newTag: adc6e65-20260203202712
   - name: result
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/piyush-demo-1-result
-    newTag: 8dfcd38-20260203202043
+    newTag: adc6e65-20260203202712
   - name: worker
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/piyush-demo-1-worker
-    newTag: 8dfcd38-20260203202043
+    newTag: adc6e65-20260203202712
 
 patches:
   - target:
