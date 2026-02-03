@@ -1,0 +1,129 @@
+# ════════════════════════════════════════════════════════════════════════════════
+# DEBUG NEW RELIC - Check pod logs and configuration
+# ════════════════════════════════════════════════════════════════════════════════
+
+name: "🔍 Debug New Relic"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to debug'
+        type: choice
+        options: ['dev', 'qa', 'staging']
+        default: 'dev'
+
+env:
+  APP_NAME: voting01
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+
+jobs:
+  debug:
+    name: "🔍 Debug New Relic Configuration"
+    runs-on: [self-hosted, linux, opsera]
+    steps:
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Check Pods
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          echo "### 📦 Pods in $NS" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n $NS >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Check New Relic Secret
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          echo "### 🔐 New Relic Secret" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get secret newrelic-license -n $NS -o jsonpath='{.data}' 2>/dev/null && echo " (exists)" >> $GITHUB_STEP_SUMMARY || echo "NOT FOUND" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Check ConfigMap
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          echo "### ⚙️ ConfigMap (New Relic settings)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get configmap voting01-config -n $NS -o yaml | grep -i "NEW_RELIC" >> $GITHUB_STEP_SUMMARY || echo "No NEW_RELIC settings found" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Check Vote Pod Env Vars
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          VOTE_POD=$(kubectl get pods -n $NS -l app=vote -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+          echo "### 🗳️ Vote Pod Environment" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$VOTE_POD" ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl exec $VOTE_POD -n $NS -- env | grep -i "NEW_RELIC" >> $GITHUB_STEP_SUMMARY || echo "No NEW_RELIC env vars" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Vote pod not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check Vote Pod Logs
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          VOTE_POD=$(kubectl get pods -n $NS -l app=vote -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+          echo "### 📜 Vote Pod Logs (last 50 lines)" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$VOTE_POD" ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl logs $VOTE_POD -n $NS --tail=50 >> $GITHUB_STEP_SUMMARY 2>&1
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Vote pod not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check Result Pod Logs
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          RESULT_POD=$(kubectl get pods -n $NS -l app=result -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+          echo "### 📜 Result Pod Logs (last 50 lines)" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$RESULT_POD" ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl logs $RESULT_POD -n $NS --tail=50 >> $GITHUB_STEP_SUMMARY 2>&1
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Result pod not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check Process in Vote Pod
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          VOTE_POD=$(kubectl get pods -n $NS -l app=vote -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+          echo "### 🔧 Vote Pod Process (PID 1)" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$VOTE_POD" ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl exec $VOTE_POD -n $NS -- cat /proc/1/cmdline 2>/dev/null | tr '\0' ' ' >> $GITHUB_STEP_SUMMARY || echo "Could not read process" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Vote pod not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Test New Relic Connectivity
+        run: |
+          NS="${{ env.APP_NAME }}-${{ github.event.inputs.environment }}"
+          VOTE_POD=$(kubectl get pods -n $NS -l app=vote -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+          echo "### 🌐 New Relic Host Connectivity" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$VOTE_POD" ]; then
+            NR_HOST=$(kubectl exec $VOTE_POD -n $NS -- printenv NEW_RELIC_HOST 2>/dev/null || echo "not set")
+            echo "Host: $NR_HOST" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl exec $VOTE_POD -n $NS -- curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" "https://${NR_HOST}/" --connect-timeout 5 2>&1 >> $GITHUB_STEP_SUMMARY || echo "curl not available or connection failed" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
