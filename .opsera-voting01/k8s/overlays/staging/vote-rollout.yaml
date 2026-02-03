@@ -27,7 +27,7 @@ spec:
               name: http
           env:
             - name: NEW_RELIC_APP_NAME
-              value: "voting01-vote"
+              value: "voting01-vote-staging"
           envFrom:
             - configMapRef:
                 name: voting01-config

@@ -23,7 +23,7 @@ spec:
           image: PLACEHOLDER_WORKER_IMAGE
           env:
             - name: NEW_RELIC_APP_NAME
-              value: "voting01-worker"
+              value: "voting01-worker-dev"
           envFrom:
             - configMapRef:
                 name: voting01-config
