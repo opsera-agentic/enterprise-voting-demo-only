@@ -57,17 +57,23 @@ jobs:
             echo "| \`$SHA\` | $MSG |" >> $GITHUB_STEP_SUMMARY
           done
 
-          # Count commits by type
-          FEATURES=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "feat" || echo "0")
-          FIXES=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "fix" || echo "0")
-          DOCS=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "docs" || echo "0")
-          CHORE=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "chore" || echo "0")
+          # Count commits by type (use subshell to avoid grep exit code issues)
+          FEATURES=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "feat" || true)
+          FIXES=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "fix" || true)
+          DOCS=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "docs" || true)
+          CHORE=$(git log --oneline $COMMIT_RANGE 2>/dev/null | grep -c "chore" || true)
+
+          # Default to 0 if empty
+          FEATURES=${FEATURES:-0}
+          FIXES=${FIXES:-0}
+          DOCS=${DOCS:-0}
+          CHORE=${CHORE:-0}
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Summary:** $FEATURES features, $FIXES fixes, $DOCS docs, $CHORE chores" >> $GITHUB_STEP_SUMMARY
 
-          echo "features=$FEATURES" >> $GITHUB_OUTPUT
-          echo "fixes=$FIXES" >> $GITHUB_OUTPUT
+          echo "features=${FEATURES}" >> $GITHUB_OUTPUT
+          echo "fixes=${FIXES}" >> $GITHUB_OUTPUT
 
       - name: Update Learnings Guide
         if: github.event_name == 'workflow_dispatch'
