@@ -85,8 +85,8 @@ jobs:
                 # If author is a bot, find the last non-bot commit author
                 if [ "$AUTHOR" = "github-actions[bot]" ] || [ "$AUTHOR" = "GitHub Actions" ]; then
                   # Find the last commit by a human (not bot) before or at this SHA
-                  AUTHOR=$(git log --format="%an" "$SOURCE_SHA" 2>/dev/null | grep -v -E "github-actions|GitHub Actions|\[bot\]" | head -1)
-                  [ -z "$AUTHOR" ] && AUTHOR=$(git log --format="%an" -10 2>/dev/null | grep -v -E "github-actions|GitHub Actions|\[bot\]" | head -1)
+                  AUTHOR=$(git log --format="%an" "$SOURCE_SHA" 2>/dev/null | grep -v -E "github-actions|GitHub Actions|\[bot\]" | head -1 || true)
+                  [ -z "$AUTHOR" ] && AUTHOR=$(git log --format="%an" -10 2>/dev/null | grep -v -E "github-actions|GitHub Actions|\[bot\]" | head -1 || true)
                   [ -z "$AUTHOR" ] && AUTHOR="Unknown"
                 fi
 
@@ -1017,6 +1017,8 @@ jobs:
             echo "No changes to README"
           else
             git commit -m "docs: Update deployment dashboard [skip ci]"
+            # Pull any changes before pushing to avoid conflicts
+            git pull --rebase origin main || true
             git push
             echo "README updated and pushed"
           fi
