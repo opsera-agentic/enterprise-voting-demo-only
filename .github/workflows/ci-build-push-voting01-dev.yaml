@@ -616,10 +616,6 @@ jobs:
             CONFIGURED="false"
             MISSING="${MISSING} JIRA_API_TOKEN"
           fi
-          if [ -z "${{ secrets.JIRA_EMAIL }}" ]; then
-            CONFIGURED="false"
-            MISSING="${MISSING} JIRA_EMAIL"
-          fi
           if [ -z "${{ secrets.JIRA_BASE_URL }}" ]; then
             CONFIGURED="false"
             MISSING="${MISSING} JIRA_BASE_URL"
@@ -633,136 +629,80 @@ jobs:
 
       - name: Create Jira Security Issue
         if: steps.check-jira.outputs.configured == 'true'
+        env:
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_PROJECT: ${{ secrets.JIRA_PROJECT }}
+          JIRA_AUTH_TYPE: ${{ secrets.JIRA_AUTH_TYPE }}
         run: |
           TOTAL_CRIT="${{ needs.build.outputs.total_critical }}"
           TOTAL_HIGH="${{ needs.build.outputs.total_high }}"
 
           # Determine priority based on findings
           if [ "${TOTAL_CRIT:-0}" -gt 0 ]; then
-            PRIORITY="Highest"
-            SEVERITY_TEXT="CRITICAL"
-          else
             PRIORITY="High"
-            SEVERITY_TEXT="HIGH"
+          else
+            PRIORITY="Medium"
           fi
 
-          # Create security vulnerability issue
-          RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Basic $(echo -n '${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}' | base64)" \
-            -H "Content-Type: application/json" \
-            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/issue" \
-            -d '{
+          # Set auth header based on auth type (api-key for mock Jira, basic for Jira Cloud)
+          if [ "$JIRA_AUTH_TYPE" = "api-key" ]; then
+            AUTH_HEADER="X-API-Key: ${JIRA_API_TOKEN}"
+          else
+            AUTH_HEADER="Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)"
+          fi
+
+          # Use configured project or default to TEST
+          PROJECT_KEY="${JIRA_PROJECT:-TEST}"
+
+          # Build description
+          DESCRIPTION="Security scan detected vulnerabilities in container images for voting01-dev.
+
+Vulnerability Summary:
+- Vote: ${{ needs.build.outputs.vote_critical }} Critical, ${{ needs.build.outputs.vote_high }} High
+- Result: ${{ needs.build.outputs.result_critical }} Critical, ${{ needs.build.outputs.result_high }} High
+- Worker: ${{ needs.build.outputs.worker_critical }} Critical, ${{ needs.build.outputs.worker_high }} High
+- TOTAL: ${TOTAL_CRIT} Critical, ${TOTAL_HIGH} High
+
+Build Details:
+- Image Tag: ${{ needs.build.outputs.image_tag }}
+- Commit: ${{ github.sha }}
+- Branch: ${{ github.ref_name }}
+- Triggered by: ${{ github.actor }}
+
+View full scan results: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Create payload (API v2 format)
+          PAYLOAD=$(jq -n \
+            --arg project "$PROJECT_KEY" \
+            --arg summary "[SECURITY] voting01-dev: ${TOTAL_CRIT} Critical, ${TOTAL_HIGH} High vulnerabilities" \
+            --arg description "$DESCRIPTION" \
+            --arg priority "$PRIORITY" \
+            '{
               "fields": {
-                "project": {"key": "DEPLOY"},
-                "summary": "[SECURITY] voting01-dev: '${TOTAL_CRIT}' Critical, '${TOTAL_HIGH}' High vulnerabilities",
-                "description": {
-                  "type": "doc",
-                  "version": 1,
-                  "content": [
-                    {
-                      "type": "paragraph",
-                      "content": [
-                        {"type": "text", "text": "Security scan detected vulnerabilities in container images for voting01-dev.", "marks": [{"type": "strong"}]}
-                      ]
-                    },
-                    {
-                      "type": "heading",
-                      "attrs": {"level": 3},
-                      "content": [{"type": "text", "text": "Vulnerability Summary"}]
-                    },
-                    {
-                      "type": "table",
-                      "attrs": {"isNumberColumnEnabled": false, "layout": "default"},
-                      "content": [
-                        {
-                          "type": "tableRow",
-                          "content": [
-                            {"type": "tableHeader", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Service"}]}]},
-                            {"type": "tableHeader", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Critical"}]}]},
-                            {"type": "tableHeader", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "High"}]}]}
-                          ]
-                        },
-                        {
-                          "type": "tableRow",
-                          "content": [
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Vote"}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "${{ needs.build.outputs.vote_critical }}"}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "${{ needs.build.outputs.vote_high }}"}]}]}
-                          ]
-                        },
-                        {
-                          "type": "tableRow",
-                          "content": [
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Result"}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "${{ needs.build.outputs.result_critical }}"}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "${{ needs.build.outputs.result_high }}"}]}]}
-                          ]
-                        },
-                        {
-                          "type": "tableRow",
-                          "content": [
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Worker"}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "${{ needs.build.outputs.worker_critical }}"}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "${{ needs.build.outputs.worker_high }}"}]}]}
-                          ]
-                        },
-                        {
-                          "type": "tableRow",
-                          "content": [
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "TOTAL", "marks": [{"type": "strong"}]}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "'${TOTAL_CRIT}'", "marks": [{"type": "strong"}]}]}]},
-                            {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "'${TOTAL_HIGH}'", "marks": [{"type": "strong"}]}]}]}
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "heading",
-                      "attrs": {"level": 3},
-                      "content": [{"type": "text", "text": "Build Details"}]
-                    },
-                    {
-                      "type": "bulletList",
-                      "content": [
-                        {
-                          "type": "listItem",
-                          "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Image Tag: ${{ needs.build.outputs.image_tag }}"}]}]
-                        },
-                        {
-                          "type": "listItem",
-                          "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Commit: ${{ github.sha }}"}]}]
-                        },
-                        {
-                          "type": "listItem",
-                          "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Branch: ${{ github.ref_name }}"}]}]
-                        },
-                        {
-                          "type": "listItem",
-                          "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Triggered by: ${{ github.actor }}"}]}]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "paragraph",
-                      "content": [
-                        {"type": "text", "text": "View full scan results: "},
-                        {"type": "text", "text": "GitHub Actions", "marks": [{"type": "link", "attrs": {"href": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}}]}
-                      ]
-                    }
-                  ]
-                },
-                "issuetype": {"name": "Bug"},
-                "priority": {"name": "'${PRIORITY}'"},
-                "labels": ["security-vulnerability", "container-scan", "voting01", "dev", "grype"]
+                "project": {"key": $project},
+                "summary": $summary,
+                "description": $description,
+                "issuetype": {"name": "Task"},
+                "priority": {"name": $priority}
               }
             }')
 
-          ISSUE_KEY=$(echo "$RESPONSE" | jq -r '.key // "FAILED"')
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "${AUTH_HEADER}" \
+            -H "Content-Type: application/json" \
+            "${JIRA_BASE_URL}/rest/api/2/issue" \
+            -d "$PAYLOAD")
 
-          if [ "$ISSUE_KEY" != "FAILED" ] && [ "$ISSUE_KEY" != "null" ]; then
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          ISSUE_KEY=$(echo "$BODY" | jq -r '.key // "FAILED"')
+
+          if [ "$ISSUE_KEY" != "FAILED" ] && [ "$ISSUE_KEY" != "null" ] && [ "$HTTP_CODE" = "201" ]; then
             echo "### 🔒 Jira Security Issue Created" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Issue:** [$ISSUE_KEY](${{ secrets.JIRA_BASE_URL }}/browse/${ISSUE_KEY})" >> $GITHUB_STEP_SUMMARY
+            echo "**Issue:** [$ISSUE_KEY](${JIRA_BASE_URL}/browse/${ISSUE_KEY})" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "| Service | Critical | High |" >> $GITHUB_STEP_SUMMARY
             echo "|---------|----------|------|" >> $GITHUB_STEP_SUMMARY
@@ -771,12 +711,9 @@ jobs:
             echo "| Worker | ${{ needs.build.outputs.worker_critical }} | ${{ needs.build.outputs.worker_high }} |" >> $GITHUB_STEP_SUMMARY
             echo "| **Total** | **${TOTAL_CRIT}** | **${TOTAL_HIGH}** |" >> $GITHUB_STEP_SUMMARY
           else
-            echo "⚠️ Failed to create Jira security issue" >> $GITHUB_STEP_SUMMARY
-            echo "Response: $RESPONSE" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Failed to create Jira security issue (HTTP $HTTP_CODE)" >> $GITHUB_STEP_SUMMARY
+            echo "Response: $BODY" >> $GITHUB_STEP_SUMMARY
           fi
-        env:
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
 
   notify-jira:
     name: "📋 Jira Issue"
@@ -790,94 +727,88 @@ jobs:
         run: |
           CONFIGURED="true"
           MISSING=""
-          
+
           if [ -z "${{ secrets.JIRA_API_TOKEN }}" ]; then
             CONFIGURED="false"
             MISSING="${MISSING} JIRA_API_TOKEN"
-          fi
-          if [ -z "${{ secrets.JIRA_EMAIL }}" ]; then
-            CONFIGURED="false"
-            MISSING="${MISSING} JIRA_EMAIL"
           fi
           if [ -z "${{ secrets.JIRA_BASE_URL }}" ]; then
             CONFIGURED="false"
             MISSING="${MISSING} JIRA_BASE_URL"
           fi
-          
+
           echo "configured=${CONFIGURED}" >> $GITHUB_OUTPUT
-          
+
           if [ "$CONFIGURED" = "false" ]; then
             echo "⚠️ Jira not configured - missing:${MISSING}" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Create Jira Issue
         if: steps.check-jira.outputs.configured == 'true'
-        run: |
-          # Create deployment failure issue
-          RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Basic $(echo -n '${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}' | base64)" \
-            -H "Content-Type: application/json" \
-            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/issue" \
-            -d '{
-              "fields": {
-                "project": {"key": "DEPLOY"},
-                "summary": "[voting01-dev] Deployment Failed - ${{ github.sha }}",
-                "description": {
-                  "type": "doc",
-                  "version": 1,
-                  "content": [
-                    {
-                      "type": "paragraph",
-                      "content": [
-                        {"type": "text", "text": "Deployment failed for voting01-dev environment."}
-                      ]
-                    },
-                    {
-                      "type": "heading",
-                      "attrs": {"level": 3},
-                      "content": [{"type": "text", "text": "Details"}]
-                    },
-                    {
-                      "type": "bulletList",
-                      "content": [
-                        {
-                          "type": "listItem",
-                          "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Commit: ${{ github.sha }}"}]}]
-                        },
-                        {
-                          "type": "listItem",
-                          "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Branch: ${{ github.ref_name }}"}]}]
-                        },
-                        {
-                          "type": "listItem",
-                          "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Triggered by: ${{ github.actor }}"}]}]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "paragraph",
-                      "content": [
-                        {"type": "text", "text": "Workflow: "},
-                        {"type": "text", "text": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "marks": [{"type": "link", "attrs": {"href": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}}]}
-                      ]
-                    }
-                  ]
-                },
-                "issuetype": {"name": "Bug"},
-                "priority": {"name": "High"},
-                "labels": ["deployment-failure", "voting01", "dev"]
-              }
-            }')
-          
-          ISSUE_KEY=$(echo "$RESPONSE" | jq -r '.key // "FAILED"')
-          
-          if [ "$ISSUE_KEY" != "FAILED" ] && [ "$ISSUE_KEY" != "null" ]; then
-            echo "### 📋 Jira Issue Created" >> $GITHUB_STEP_SUMMARY
-            echo "Issue: [$ISSUE_KEY](${{ secrets.JIRA_BASE_URL }}/browse/${ISSUE_KEY})" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ Failed to create Jira issue" >> $GITHUB_STEP_SUMMARY
-            echo "Response: $RESPONSE" >> $GITHUB_STEP_SUMMARY
-          fi
         env:
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_PROJECT: ${{ secrets.JIRA_PROJECT }}
+          JIRA_AUTH_TYPE: ${{ secrets.JIRA_AUTH_TYPE }}
+        run: |
+          # Set auth header based on auth type (api-key for mock Jira, basic for Jira Cloud)
+          if [ "$JIRA_AUTH_TYPE" = "api-key" ]; then
+            AUTH_HEADER="X-API-Key: ${JIRA_API_TOKEN}"
+          else
+            AUTH_HEADER="Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)"
+          fi
+
+          # Use configured project or default to TEST
+          PROJECT_KEY="${JIRA_PROJECT:-TEST}"
+
+          # Build description
+          DESCRIPTION="Deployment failed for voting01-dev environment.
+
+Details:
+- Image Tag: ${{ needs.build.outputs.image_tag }}
+- Commit: ${{ github.sha }}
+- Branch: ${{ github.ref_name }}
+- Triggered by: ${{ github.actor }}
+
+Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Create payload (API v2 format)
+          PAYLOAD=$(jq -n \
+            --arg project "$PROJECT_KEY" \
+            --arg summary "[DEPLOY-FAIL] voting01-dev: Deployment Failed" \
+            --arg description "$DESCRIPTION" \
+            '{
+              "fields": {
+                "project": {"key": $project},
+                "summary": $summary,
+                "description": $description,
+                "issuetype": {"name": "Task"},
+                "priority": {"name": "High"}
+              }
+            }')
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "${AUTH_HEADER}" \
+            -H "Content-Type: application/json" \
+            "${JIRA_BASE_URL}/rest/api/2/issue" \
+            -d "$PAYLOAD")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          ISSUE_KEY=$(echo "$BODY" | jq -r '.key // "FAILED"')
+
+          if [ "$ISSUE_KEY" != "FAILED" ] && [ "$ISSUE_KEY" != "null" ] && [ "$HTTP_CODE" = "201" ]; then
+            echo "### 📋 Jira Issue Created" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Issue:** [$ISSUE_KEY](${JIRA_BASE_URL}/browse/${ISSUE_KEY})" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Type | Deployment Failure |" >> $GITHUB_STEP_SUMMARY
+            echo "| Environment | dev |" >> $GITHUB_STEP_SUMMARY
+            echo "| Image Tag | ${{ needs.build.outputs.image_tag }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Failed to create Jira issue (HTTP $HTTP_CODE)" >> $GITHUB_STEP_SUMMARY
+            echo "Response: $BODY" >> $GITHUB_STEP_SUMMARY
+          fi
