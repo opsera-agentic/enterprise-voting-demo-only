@@ -284,6 +284,9 @@ jobs:
             --arg priority "$PRIORITY" \
             '{"fields": {"project": {"key": $project}, "summary": $summary, "description": $description, "issuetype": {"name": $issuetype}, "priority": {"name": $priority}}}')
 
+          echo "Sending request to: ${JIRA_BASE_URL}/rest/api/${API_VERSION}/issue"
+          echo "Payload summary: $SUMMARY"
+
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "${AUTH_HEADER}" \
             -H "Content-Type: application/json" \
@@ -292,6 +295,10 @@ jobs:
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response Body: $BODY"
+
           ISSUE_KEY=$(echo "$BODY" | jq -r '.key // "FAILED"')
 
           if [ "$ISSUE_KEY" != "FAILED" ] && [ "$ISSUE_KEY" != "null" ] && [ "$HTTP_CODE" = "201" ]; then
