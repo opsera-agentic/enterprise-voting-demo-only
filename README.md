@@ -1,5 +1,32 @@
 # Example Voting App
 
+[![Deployment Landscape](https://img.shields.io/badge/📊_Deployment-Landscape-blue?style=for-the-badge)](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/deployment-landscape-voting01.yaml)
+[![CI/CD DEV](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/ci-build-push-voting01-dev.yaml/badge.svg)](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/ci-build-push-voting01-dev.yaml)
+
+---
+
+## 🚀 Deployment Dashboard
+
+| Environment | App | Status | Last Deploy |
+|-------------|-----|--------|-------------|
+| 🔧 **DEV** | [Vote](https://vote-voting01-dev.agent.opsera.dev) / [Result](https://result-voting01-dev.agent.opsera.dev) | Auto-deploy on push | Rolling |
+| 🧪 **QA** | [Vote](https://vote-voting01-qa.agent.opsera.dev) / [Result](https://result-voting01-qa.agent.opsera.dev) | Manual trigger | 🐤 Canary |
+| 🎭 **Staging** | [Vote](https://vote-voting01-staging.agent.opsera.dev) / [Result](https://result-voting01-staging.agent.opsera.dev) | Approval required | 🔵🟢 Blue-Green |
+
+### Quick Actions
+
+| Action | Link |
+|--------|------|
+| 📊 **View Full Landscape Report** | [▶️ Open Dashboard](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/deployment-landscape-voting01.yaml) |
+| 🔧 Deploy to DEV | [▶️ Run](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/ci-build-push-voting01-dev.yaml) |
+| 🧪 Deploy to QA | [▶️ Run](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/ci-build-push-voting01-qa.yaml) |
+| 🎭 Deploy to Staging | [▶️ Run](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/ci-build-push-voting01-staging.yaml) |
+| ⬆️ Promote Environment | [▶️ Run](https://github.com/opsera-agentic/enterprise-voting-demo-only/actions/workflows/promote-voting01.yaml) |
+
+> 💡 **Tip:** Click the "📊 Deployment Landscape" badge above to see the full deployment report with version history, health status, and architecture diagrams.
+
+---
+
 A simple distributed application running across multiple Docker containers.
 
 ## Getting started

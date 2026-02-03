@@ -275,6 +275,118 @@ jobs:
 
           EOF
 
+      - name: Latest Deployments
+        env:
+          DEV_HIST: ${{ needs.collect-data.outputs.dev_history }}
+          QA_HIST: ${{ needs.collect-data.outputs.qa_history }}
+          STG_HIST: ${{ needs.collect-data.outputs.staging_history }}
+          DEV_V: ${{ needs.collect-data.outputs.dev_version }}
+          QA_V: ${{ needs.collect-data.outputs.qa_version }}
+          STG_V: ${{ needs.collect-data.outputs.staging_version }}
+          DEV_H: ${{ needs.collect-metrics.outputs.dev_health }}
+          QA_H: ${{ needs.collect-metrics.outputs.qa_health }}
+          STG_H: ${{ needs.collect-metrics.outputs.staging_health }}
+          DEV_P: ${{ needs.collect-metrics.outputs.dev_pods }}
+          QA_P: ${{ needs.collect-metrics.outputs.qa_pods }}
+          STG_P: ${{ needs.collect-metrics.outputs.staging_pods }}
+          DEV_STATUS: ${{ needs.collect-workflow-status.outputs.dev_status }}
+          DEV_RUN_ID: ${{ needs.collect-workflow-status.outputs.dev_run_id }}
+          REPO_URL: https://github.com/${{ env.GITHUB_REPO }}
+        run: |
+          echo "## 🚀 Latest Deployments" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Function to convert timestamp to relative time (mins/hours)
+          relative_time() {
+            local timestamp=$1
+            local now=$(date +%s)
+            local diff=$((now - timestamp))
+
+            if [ $diff -lt 60 ]; then
+              echo "just now"
+            elif [ $diff -lt 3600 ]; then
+              local mins=$((diff / 60))
+              [ $mins -eq 1 ] && echo "1 min ago" || echo "${mins} mins ago"
+            elif [ $diff -lt 86400 ]; then
+              local hrs=$((diff / 3600))
+              local remaining_mins=$(((diff % 3600) / 60))
+              if [ $remaining_mins -gt 0 ]; then
+                echo "${hrs}h ${remaining_mins}m ago"
+              else
+                [ $hrs -eq 1 ] && echo "1 hr ago" || echo "${hrs} hrs ago"
+              fi
+            elif [ $diff -lt 604800 ]; then
+              local days=$((diff / 86400))
+              [ $days -eq 1 ] && echo "1 day ago" || echo "${days} days ago"
+            else
+              local weeks=$((diff / 604800))
+              [ $weeks -eq 1 ] && echo "1 week ago" || echo "${weeks} weeks ago"
+            fi
+          }
+
+          # Health icon
+          health_icon() {
+            case "$1" in
+              healthy) echo "✅" ;;
+              degraded) echo "⚠️" ;;
+              *) echo "❓" ;;
+            esac
+          }
+
+          # Get latest deploy info for each environment
+          get_latest() {
+            local history=$1
+            if [ -n "$history" ]; then
+              echo "$history" | cut -d';' -f1
+            fi
+          }
+
+          # Environment summary table
+          echo "| Environment | Version | Health | Pods | Last Deploy | Deployed By |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------------|---------|--------|------|-------------|-------------|" >> $GITHUB_STEP_SUMMARY
+
+          for ENV in DEV QA STAGING; do
+            case $ENV in
+              DEV) HIST="$DEV_HIST"; VER="$DEV_V"; HEALTH="$DEV_H"; PODS="$DEV_P"; ICON="🔧" ;;
+              QA) HIST="$QA_HIST"; VER="$QA_V"; HEALTH="$QA_H"; PODS="$QA_P"; ICON="🧪" ;;
+              STAGING) HIST="$STG_HIST"; VER="$STG_V"; HEALTH="$STG_H"; PODS="$STG_P"; ICON="🎭" ;;
+            esac
+
+            LATEST=$(get_latest "$HIST")
+            if [ -n "$LATEST" ]; then
+              TIMESTAMP=$(echo "$LATEST" | cut -d'~' -f3)
+              AUTHOR=$(echo "$LATEST" | cut -d'~' -f4)
+              REL_TIME=$(relative_time "$TIMESTAMP")
+            else
+              REL_TIME="-"
+              AUTHOR="-"
+            fi
+
+            # Version link
+            if [ "$VER" != "unknown" ] && [ -n "$VER" ]; then
+              SHA=$(echo "$VER" | cut -d'-' -f1)
+              VER_LINK="[\`${VER:0:20}\`](${REPO_URL}/commit/${SHA})"
+            else
+              VER_LINK="\`${VER}\`"
+            fi
+
+            echo "| ${ICON} **${ENV}** | ${VER_LINK} | $(health_icon $HEALTH) | ${PODS:-0} | ${REL_TIME} | ${AUTHOR} |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Pipeline status for DEV
+          if [ -n "$DEV_RUN_ID" ] && [ "$DEV_STATUS" != "unknown" ]; then
+            if [ "$DEV_STATUS" = "success" ]; then
+              echo "> ✅ **Last DEV Pipeline:** Success - [View Run](${REPO_URL}/actions/runs/${DEV_RUN_ID})" >> $GITHUB_STEP_SUMMARY
+            elif [ "$DEV_STATUS" = "failure" ]; then
+              echo "> ❌ **Last DEV Pipeline:** Failed - [View Run](${REPO_URL}/actions/runs/${DEV_RUN_ID})" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "> ⚠️ **Last DEV Pipeline:** ${DEV_STATUS} - [View Run](${REPO_URL}/actions/runs/${DEV_RUN_ID})" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Sync Status Banner
         env:
           IN_SYNC: ${{ needs.collect-data.outputs.in_sync }}
@@ -585,7 +697,8 @@ jobs:
           STG_HIST: ${{ needs.collect-data.outputs.staging_history }}
           REPO_URL: https://github.com/${{ env.GITHUB_REPO }}
         run: |
-          echo "## 📜 Deployment History (Last 5)" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary><strong>📜 Deployment History (Last 5 per environment)</strong></summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Function to convert timestamp to relative time
@@ -601,7 +714,12 @@ jobs:
               [ $mins -eq 1 ] && echo "1 min ago" || echo "${mins} mins ago"
             elif [ $diff -lt 86400 ]; then
               local hrs=$((diff / 3600))
-              [ $hrs -eq 1 ] && echo "1 hr ago" || echo "${hrs} hrs ago"
+              local remaining_mins=$(((diff % 3600) / 60))
+              if [ $remaining_mins -gt 0 ]; then
+                echo "${hrs}h ${remaining_mins}m ago"
+              else
+                [ $hrs -eq 1 ] && echo "1 hr ago" || echo "${hrs} hrs ago"
+              fi
             elif [ $diff -lt 604800 ]; then
               local days=$((diff / 86400))
               [ $days -eq 1 ] && echo "1 day ago" || echo "${days} days ago"
@@ -645,6 +763,9 @@ jobs:
           render_history "DEV" "🔧" "$DEV_HIST"
           render_history "QA" "🧪" "$QA_HIST"
           render_history "STAGING" "🎭" "$STG_HIST"
+
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
       - name: Quick Links
         env:
