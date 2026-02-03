@@ -99,6 +99,75 @@ AUTHOR=$(git log -1 --format="%an" "$SOURCE_SHA" 2>/dev/null || echo "Unknown")
 | Commit | Description |
 |--------|-------------|
 | `08923f6` | Created `.opsera-learnings/jira-integration-guide.md` (this file) |
+| `b11a195` | Added complete session history and auto-update workflow |
+
+### Phase 6: README Auto-Update Dashboard
+
+| Commit | Description |
+|--------|-------------|
+| `df51f38` | Improved landscape report layout - deployments on top, diagrams below |
+| `e44fde6` | Added auto-update README with live deployment status |
+| `432fd25` | First auto-generated README update with deployment data |
+
+**Key Features:**
+- README deployment dashboard auto-updates on every landscape run
+- Shows for each environment:
+  - **Last Deploy** - Relative time (`1h 12m ago`, `13h 33m ago`)
+  - **Owner** - Who made the code change (not github-actions[bot])
+  - **Recent Deployments** - Last 5 as bullets with relative timestamps
+- Uses HTML comment markers for section replacement
+- Commits with `[skip ci]` to avoid triggering builds
+
+**README Template Structure:**
+```markdown
+<!-- DEPLOYMENT-STATUS:START - Auto-updated by landscape workflow -->
+| Environment | App | Last Deploy | Owner | Recent Deployments |
+|-------------|-----|-------------|-------|-------------------|
+| 🔧 **DEV** | Vote / Result | 1h 12m ago | user | • `abc123` (1h ago)<br>• `def456` (2h ago) |
+...
+> 📅 _Last updated: 2026-02-03 21:51 UTC_ | 🔄 Refresh
+<!-- DEPLOYMENT-STATUS:END -->
+```
+
+**Relative Time Function:**
+```bash
+relative_time() {
+  local timestamp=$1
+  local now=$(date +%s)
+  local diff=$((now - timestamp))
+
+  if [ $diff -lt 60 ]; then
+    echo "just now"
+  elif [ $diff -lt 3600 ]; then
+    local mins=$((diff / 60))
+    [ $mins -eq 1 ] && echo "1 min ago" || echo "${mins} mins ago"
+  elif [ $diff -lt 86400 ]; then
+    local hrs=$((diff / 3600))
+    local remaining_mins=$(((diff % 3600) / 60))
+    if [ $remaining_mins -gt 0 ]; then
+      echo "${hrs}h ${remaining_mins}m ago"
+    else
+      [ $hrs -eq 1 ] && echo "1 hr ago" || echo "${hrs} hrs ago"
+    fi
+  elif [ $diff -lt 604800 ]; then
+    local days=$((diff / 86400))
+    [ $days -eq 1 ] && echo "1 day ago" || echo "${days} days ago"
+  else
+    local weeks=$((diff / 604800))
+    [ $weeks -eq 1 ] && echo "1 week ago" || echo "${weeks} weeks ago"
+  fi
+}
+```
+
+**AWK Section Replacement Pattern:**
+```bash
+# Update README between markers
+awk '
+  /<!-- DEPLOYMENT-STATUS:START/ { skip=1; system("cat /tmp/deploy-status.md"); next }
+  /<!-- DEPLOYMENT-STATUS:END/ { skip=0; next }
+  !skip { print }
+' README.md > README.md.tmp && mv README.md.tmp README.md
+```
 
 ### Summary of All Issues Resolved
 
@@ -120,7 +189,8 @@ AUTHOR=$(git log -1 --format="%an" "$SOURCE_SHA" 2>/dev/null || echo "Unknown")
 | **CI/CD Pipeline** | `.github/workflows/ci-build-push-voting01-dev.yaml` |
 | **Landscape Dashboard** | `.github/workflows/deployment-landscape-voting01.yaml` |
 | **Jira Testing** | `.github/workflows/test-jira-integration.yaml` |
-| **Documentation** | `.opsera-learnings/jira-integration-guide.md` |
+| **Learnings Workflow** | `.github/workflows/update-learnings.yaml` |
+| **Documentation** | `.opsera-learnings/jira-integration-guide.md`, `README.md` |
 
 ---
 
