@@ -62,15 +62,25 @@ jobs:
 
       - name: Test Jira API Connection
         if: steps.check-jira.outputs.configured == 'true'
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
         run: |
           echo "### 🔌 Testing Jira API Connection" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          # Show masked URL format for debugging
+          URL_DOMAIN=$(echo "$JIRA_BASE_URL" | sed 's|https://||' | sed 's|http://||' | cut -d'/' -f1)
+          echo "**Target:** \`https://${URL_DOMAIN}/...\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Email:** \`${JIRA_EMAIL}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
           # Test API connection by getting server info
           RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -H "Authorization: Basic $(echo -n '${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}' | base64)" \
+            -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
             -H "Content-Type: application/json" \
-            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/serverInfo")
+            "${JIRA_BASE_URL}/rest/api/3/serverInfo")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
@@ -90,14 +100,18 @@ jobs:
 
       - name: List Available Projects
         if: steps.check-jira.outputs.configured == 'true'
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
         run: |
           echo "### 📁 Available Jira Projects" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           RESPONSE=$(curl -s \
-            -H "Authorization: Basic $(echo -n '${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}' | base64)" \
+            -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
             -H "Content-Type: application/json" \
-            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/project")
+            "${JIRA_BASE_URL}/rest/api/3/project")
 
           echo "| Key | Name |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|------|" >> $GITHUB_STEP_SUMMARY
@@ -111,6 +125,10 @@ jobs:
       - name: Create Test Jira Ticket
         if: steps.check-jira.outputs.configured == 'true'
         id: create-ticket
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
         run: |
           echo "### 📝 Creating Test Jira Ticket" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -143,9 +161,9 @@ jobs:
           PROJECT_KEY="DEPLOY"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "Authorization: Basic $(echo -n '${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}' | base64)" \
+            -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
             -H "Content-Type: application/json" \
-            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/issue" \
+            "${JIRA_BASE_URL}/rest/api/3/issue" \
             -d "{
               \"fields\": {
                 \"project\": {\"key\": \"${PROJECT_KEY}\"},
@@ -182,7 +200,7 @@ jobs:
           ISSUE_ID=$(echo "$BODY" | jq -r '.id // "FAILED"')
 
           if [ "$ISSUE_KEY" != "FAILED" ] && [ "$ISSUE_KEY" != "null" ] && [ "$HTTP_CODE" = "201" ]; then
-            ISSUE_URL="${{ secrets.JIRA_BASE_URL }}/browse/${ISSUE_KEY}"
+            ISSUE_URL="${JIRA_BASE_URL}/browse/${ISSUE_KEY}"
             echo "✅ **Ticket Created Successfully!**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
