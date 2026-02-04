@@ -86,6 +86,57 @@ kubectl delete -f k8s-specifications/
 * A [Postgres](https://hub.docker.com/_/postgres/) database backed by a Docker volume
 * A [Node.js](/result) web app which shows the results of the voting in real time
 
+## 📚 Documentation & Reports
+
+### Deployment Reports
+Detailed deployment reports are generated for each significant deployment and stored in the `.deployments/` folder:
+
+| Report | Description |
+|--------|-------------|
+| [E2E Integration Test v23](/.deployments/2026-02-04-a3933a3-v23-e2e-deployment-report.md) | Full end-to-end integration test with all components (NR, Jira, Slack, Security) |
+| [Canary Rollback Test](/.deployments/2026-02-04-175a032-canary-rollback-report.md) | Canary deployment with APM-driven rollback demonstration |
+| [Standard Deployment](/.deployments/2026-02-04-e3e1a9b-v17-deployment-report.md) | Complete deployment report with security scanning results |
+
+### Learnings & Best Practices
+Technical learnings and integration guides are documented in the `.learnings/` folder:
+
+| Document | Description |
+|----------|-------------|
+| [Canary Analysis + New Relic Integration](/.learnings/2026-02-04-canary-analysis-nr-integration.md) | Critical fixes for NR Python agent error capture in canary deployments |
+| [Session Learnings](/.learnings/2026-02-04-session-learnings.md) | Comprehensive DevOps learnings from production deployments |
+
+### Key Integration Points
+
+```mermaid
+flowchart TB
+    subgraph CI["CI/CD Pipeline"]
+        GHA["GitHub Actions"]
+        SEC["🔒 Security Scanning<br/>Gitleaks + Grype"]
+        SONAR["📊 SonarQube"]
+    end
+
+    subgraph DEPLOY["Deployment"]
+        ARGO["🔄 ArgoCD"]
+        CANARY["🐤 Canary Analysis"]
+    end
+
+    subgraph OBSERVE["Observability"]
+        NR["📊 New Relic APM"]
+        SLACK["📢 Slack"]
+        JIRA["📋 Jira"]
+    end
+
+    GHA --> SEC --> DEPLOY
+    GHA --> SONAR --> DEPLOY
+    DEPLOY --> ARGO --> CANARY
+    CANARY --> NR
+    NR -->|"Error Rate > 2%"| ARGO
+    ARGO -->|"Notifications"| SLACK
+    ARGO -->|"Issue Tracking"| JIRA
+```
+
+---
+
 ## Notes
 
 The voting application only accepts one vote per client browser. It does not register additional votes if a vote has already been submitted from a client.
