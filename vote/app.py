@@ -6,6 +6,9 @@
 # ════════════════════════════════════════════════════════════════════════════════
 import os
 
+# Application version - E2E Integration Test v23
+APP_VERSION = "2026.02.04-v23"
+
 # Log New Relic configuration status at startup
 _nr_license = os.getenv('NEW_RELIC_LICENSE_KEY')
 _nr_app = os.getenv('NEW_RELIC_APP_NAME', 'vote-app')
