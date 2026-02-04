@@ -59,7 +59,7 @@ spec:
     blueGreen:
       activeService: vote
       previewService: vote-preview
-      autoPromotionEnabled: true
+      autoPromotionEnabled: false  # Manual promotion after testing preview
       scaleDownDelaySeconds: 30  # Reduced from 60 for faster cleanup
       prePromotionAnalysis:
         templates:
