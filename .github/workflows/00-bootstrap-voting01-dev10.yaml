@@ -1,0 +1,105 @@
+# Bootstrap Infrastructure - voting01 DEV10
+name: "00-Bootstrap (voting01-dev10)"
+
+on:
+  workflow_dispatch:
+
+env:
+  APP_NAME: voting01
+  ENVIRONMENT: dev10
+  AWS_REGION: us-west-2
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+
+permissions:
+  contents: write
+
+jobs:
+  create-ecr:
+    name: "Create ECR Repos"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create ECR Repositories
+        run: |
+          for SERVICE in vote result worker; do
+            REPO="opsera/${{ env.APP_NAME }}-${SERVICE}"
+            aws ecr describe-repositories --repository-names $REPO 2>/dev/null || \
+            aws ecr create-repository --repository-name $REPO --image-scanning-configuration scanOnPush=true
+            echo "ECR: $REPO ready" >> $GITHUB_STEP_SUMMARY
+          done
+
+  apply-argocd:
+    name: "Apply ArgoCD"
+    needs: [create-ecr]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        run: aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Ensure Repo Secret
+        run: |
+          kubectl get secret repo-${{ env.APP_NAME }} -n argocd 2>/dev/null || \
+          kubectl create secret generic repo-${{ env.APP_NAME }} -n argocd \
+            --from-literal=type=git \
+            --from-literal=url="https://github.com/${{ github.repository }}.git" \
+            --from-literal=password="${{ secrets.GH_PAT }}" \
+            --from-literal=username="git"
+          kubectl label secret repo-${{ env.APP_NAME }} -n argocd argocd.argoproj.io/secret-type=repository --overwrite
+
+      - name: Apply ArgoCD App
+        run: |
+          kubectl apply -f .opsera-voting01/argocd/${{ env.ENVIRONMENT }}/application.yaml
+          echo "ArgoCD application voting01-${{ env.ENVIRONMENT }} applied" >> $GITHUB_STEP_SUMMARY
+
+      - name: Trigger Sync
+        run: |
+          kubectl annotate application ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} -n argocd argocd.argoproj.io/refresh=hard --overwrite
+          echo "ArgoCD sync triggered" >> $GITHUB_STEP_SUMMARY
+
+      - name: Wait for Sync
+        run: |
+          for i in {1..30}; do
+            STATUS=$(kubectl get application ${{ env.APP_NAME }}-${{ env.ENVIRONMENT }} -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+            echo "Sync: $STATUS"
+            [ "$STATUS" == "Synced" ] && exit 0
+            sleep 10
+          done
+          echo "Sync still in progress" >> $GITHUB_STEP_SUMMARY
+
+  summary:
+    name: "Summary"
+    needs: [create-ecr, apply-argocd]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# Bootstrap Complete: voting01-dev10" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ECR Repos | ${{ needs.create-ecr.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ArgoCD | ${{ needs.apply-argocd.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Run CI workflow" >> $GITHUB_STEP_SUMMARY
+          echo "2. Vote: https://vote-voting01-dev10.agent.opsera.dev" >> $GITHUB_STEP_SUMMARY
+          echo "3. Result: https://result-voting01-dev10.agent.opsera.dev" >> $GITHUB_STEP_SUMMARY
