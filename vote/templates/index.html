@@ -157,14 +157,15 @@
       });
 
       // Handle vote form - allow unlimited voting for testing
-      $('#choice').on('submit', function(e) {
+      // Use button click (not form submit) since serialize() doesn't include button values
+      $('#choice button').on('click', function(e) {
         e.preventDefault();
-        var form = $(this);
+        var vote = $(this).val();
 
         $.ajax({
           url: '/',
           method: 'POST',
-          data: form.serialize(),
+          data: {vote: vote},
           success: function() {
             // Quick flash to show vote was recorded
             $('#status-text').text('Vote recorded!').css('color', '#28a745');
